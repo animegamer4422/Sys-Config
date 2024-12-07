@@ -75,39 +75,10 @@ validate_config_file() {
         exit 1
     fi
 
-    # Check if the JSON contains valid structure
-    local distributions
-    distributions=$(jq -r 'keys[]' "$config_file" 2>/dev/null)
-
-    if [[ -z "$distributions" ]]; then
-        echo "Error: Configuration file '$config_file' does not contain any distributions."
-        exit 1
-    fi
-
-    for distro in $distributions; do
-        local configs
-        configs=$(jq -r --arg distro "$distro" '.[$distro] | keys[]' "$config_file" 2>/dev/null)
-
-        if [[ -z "$configs" ]]; then
-            echo "Error: Distribution '$distro' does not contain any configurations."
-            exit 1
-        fi
-
-        for config in $configs; do
-            local packages
-            packages=$(jq -r --arg distro "$distro" --arg config "$config" '.[$distro][$config][]' "$config_file" 2>/dev/null)
-
-            if [[ -z "$packages" ]]; then
-                echo "Error: Configuration '$config' under distribution '$distro' contains no packages."
-                exit 1
-            fi
-        done
-    done
-
     echo "Validation successful: Configuration file '$config_file' is valid."
 }
 
-# Function to install packages from the configuration file
+# Function to install packages
 install_packages() {
     local packages=("$@")
     case $PACKAGE_MANAGER in
@@ -163,7 +134,7 @@ fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
     CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
-elif [ ! -f "$CONFIG_FILE" ]; then
+elif [ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: Config file '$CONFIG_FILE' not found."
     exit 1
 fi
@@ -229,11 +200,35 @@ fi
 PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config][]' "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
-# Install the packages
-install_packages "${PACKAGE_ARRAY[@]}"
-
-# List installed packages
-echo "The following packages were installed under the '$CONFIG_TYPE' configuration for '$DISTRO':"
+# Show selected packages and ask for confirmation
+echo "Selected configuration '$CONFIG_TYPE' includes the following packages:"
 for pkg in "${PACKAGE_ARRAY[@]}"; do
     echo "- $pkg"
 done
+
+echo "Would you like to add more packages to the list? (y/n):" > /dev/tty
+read -r ADD_MORE < /dev/tty
+
+if [[ "$ADD_MORE" =~ ^[Yy]$ ]]; then
+    echo "Enter additional packages, separated by spaces:" > /dev/tty
+    read -r -a EXTRA_PACKAGES < /dev/tty
+    PACKAGE_ARRAY+=("${EXTRA_PACKAGES[@]}")
+fi
+
+echo "Final package list to be installed:"
+for pkg in "${PACKAGE_ARRAY[@]}"; do
+    echo "- $pkg"
+done
+
+echo "Do you want to proceed with installation? (y/n):" > /dev/tty
+read -r CONFIRM < /dev/tty
+
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Installation cancelled."
+    exit 0
+fi
+
+
+# Install the packages
+install_packages "${PACKAGE_ARRAY[@]}"
+echo "Installation completed!"

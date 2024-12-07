@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Function to parse command-line arguments
+parse_arguments() {
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                echo "Usage: $0 --config <path_or_url_to_config_file>"
+                exit 1
+                ;;
+        esac
+    done
+}
+
 # Function to detect the package manager (used for installing essential tools)
 detect_package_manager() {
     if command -v apt &> /dev/null; then
@@ -42,6 +59,54 @@ install_jq() {
     install_essential_tools "jq"
 }
 
+# Function to validate the configuration file
+validate_config_file() {
+    local config_file=$1
+
+    # Check if the file exists
+    if [ ! -f "$config_file" ]; then
+        echo "Error: Configuration file '$config_file' does not exist."
+        exit 1
+    fi
+
+    # Check if the file is a valid JSON
+    if ! jq empty "$config_file" &> /dev/null; then
+        echo "Error: Configuration file '$config_file' is not a valid JSON file."
+        exit 1
+    fi
+
+    # Check if the JSON contains valid structure
+    local distributions
+    distributions=$(jq -r 'keys[]' "$config_file" 2>/dev/null)
+
+    if [[ -z "$distributions" ]]; then
+        echo "Error: Configuration file '$config_file' does not contain any distributions."
+        exit 1
+    fi
+
+    for distro in $distributions; do
+        local configs
+        configs=$(jq -r --arg distro "$distro" '.[$distro] | keys[]' "$config_file" 2>/dev/null)
+
+        if [[ -z "$configs" ]]; then
+            echo "Error: Distribution '$distro' does not contain any configurations."
+            exit 1
+        fi
+
+        for config in $configs; do
+            local packages
+            packages=$(jq -r --arg distro "$distro" --arg config "$config" '.[$distro][$config][]' "$config_file" 2>/dev/null)
+
+            if [[ -z "$packages" ]]; then
+                echo "Error: Configuration '$config' under distribution '$distro' contains no packages."
+                exit 1
+            fi
+        done
+    done
+
+    echo "Validation successful: Configuration file '$config_file' is valid."
+}
+
 # Function to install packages from the configuration file
 install_packages() {
     local packages=("$@")
@@ -60,24 +125,6 @@ install_packages() {
             exit 1
             ;;
     esac
-}
-
-# Function to read the JSON file and get the packages list for the current distribution
-get_packages_for_distribution() {
-    local distro=$1
-    local json_file=$2
-
-    if ! packages=$(jq -r --arg distro "$distro" '.[$distro].packages[]' "$json_file" 2>/dev/null); then
-        echo "Error: Failed to parse the config file. Ensure it is a valid JSON file."
-        exit 1
-    fi
-
-    if [[ -z "$packages" ]]; then
-        echo "Error: No packages found for distribution '$distro' in the config file."
-        exit 1
-    fi
-
-    echo "$packages"
 }
 
 # Function to download config file if it's a URL
@@ -104,6 +151,9 @@ else
     SUDO="sudo"
 fi
 
+# Parse command-line arguments
+parse_arguments "$@"
+
 # Main script execution
 if [ -z "$CONFIG_FILE" ]; then
     echo "No config file provided."
@@ -117,6 +167,9 @@ elif [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: Config file '$CONFIG_FILE' not found."
     exit 1
 fi
+
+# Validate the configuration file
+validate_config_file "$CONFIG_FILE"
 
 if [ -f /etc/os-release ]; then
     source /etc/os-release
@@ -137,15 +190,50 @@ install_essential_tools "wget"
 # Ensure jq is installed
 install_jq
 
-# Get the list of packages for the current distribution
-PACKAGES=$(get_packages_for_distribution "$DISTRO" "$CONFIG_FILE")
+# Prompt the user to select a configuration type if not already provided
+if [ -z "$CONFIG_TYPE" ]; then
+    echo "Available configurations for '$DISTRO':"
+    CONFIG_KEYS=($(jq -r --arg distro "$DISTRO" '.[$distro] | keys[]' "$CONFIG_FILE" 2>/dev/null))
+    if [[ ${#CONFIG_KEYS[@]} -eq 0 ]]; then
+        echo "Error: No configurations found for distribution '$DISTRO' in the config file."
+        exit 1
+    fi
+
+    # Display configurations as numbered list
+    for i in "${!CONFIG_KEYS[@]}"; do
+        ALPHABET=$(printf "\x$(printf %x $((97 + i)))")
+        echo "$((i + 1)) ($ALPHABET) - ${CONFIG_KEYS[$i]}"
+    done
+
+    # Prompt the user to select a configuration
+    echo "Please select a configuration by number or letter:" > /dev/tty
+    read -r CONFIG_SELECTION < /dev/tty
+
+    # Convert letter to number if necessary
+    if [[ "$CONFIG_SELECTION" =~ ^[a-zA-Z]$ ]]; then
+        CONFIG_INDEX=$(( $(printf "%d" "'$CONFIG_SELECTION") - 97 ))
+    else
+        CONFIG_INDEX=$((CONFIG_SELECTION - 1))
+    fi
+
+    # Validate the selection
+    if [[ $CONFIG_INDEX -lt 0 || $CONFIG_INDEX -ge ${#CONFIG_KEYS[@]} ]]; then
+        echo "Invalid selection. Exiting."
+        exit 1
+    fi
+
+    CONFIG_TYPE=${CONFIG_KEYS[$CONFIG_INDEX]}
+fi
+
+# Get the list of packages for the selected configuration
+PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config][]' "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
 # Install the packages
 install_packages "${PACKAGE_ARRAY[@]}"
 
 # List installed packages
-echo "The following packages were installed:"
+echo "The following packages were installed under the '$CONFIG_TYPE' configuration for '$DISTRO':"
 for pkg in "${PACKAGE_ARRAY[@]}"; do
     echo "- $pkg"
 done

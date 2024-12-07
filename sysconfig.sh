@@ -163,7 +163,7 @@ fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
     CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
-elif [ ! -f "$CONFIG_FILE" ]]; then
+elif [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: Config file '$CONFIG_FILE' not found."
     exit 1
 fi
@@ -193,7 +193,7 @@ install_jq
 # Prompt the user to select a configuration type if not already provided
 if [ -z "$CONFIG_TYPE" ]; then
     echo "Available configurations for '$DISTRO':"
-    CONFIG_KEYS=($(jq -r --arg distro "$DISTRO" 'keys[]' "$CONFIG_FILE" 2>/dev/null))
+    CONFIG_KEYS=($(jq -r --arg distro "$DISTRO" '.[$distro] | keys[]' "$CONFIG_FILE" 2>/dev/null))
     if [[ ${#CONFIG_KEYS[@]} -eq 0 ]]; then
         echo "Error: No configurations found for distribution '$DISTRO' in the config file."
         exit 1

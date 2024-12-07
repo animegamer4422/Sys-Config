@@ -64,19 +64,10 @@ download_config_file() {
 }
 
 # Main script execution
-if [ "$#" -eq 0 ]; then
-    if [[ -t 0 ]]; then
-        # Script is running interactively
-        read -p "No config file provided. Please enter the path or URL to the config file: " CONFIG_FILE
-    else
-        echo "Error: No config file provided. Pass the file as an argument or run interactively."
-        exit 1
-    fi
-elif [[ $1 == "--config" ]]; then
-    CONFIG_FILE=$2
-else
-    echo "Usage: $0 --config <config_file>"
-    exit 1
+if [ -z "$CONFIG_FILE" ]; then
+    echo "No config file provided."
+    echo "Please enter the path or URL to the config file:"
+    read -r CONFIG_FILE
 fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then

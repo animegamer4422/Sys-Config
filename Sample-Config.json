@@ -1,14 +1,14 @@
 {
     "fedora": {
-        "server": ["nginx", "docker", "tmux"],
-        "laptop": ["firefox", "vlc", "gimp"]
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["htop", "curl", "nano"]
     },
     "debian": {
-        "server": ["apache2", "mysql-server", "ufw"],
-        "laptop": ["libreoffice", "thunderbird", "gparted"]
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["htop", "curl", "nano"]
     },
     "arch": {
-        "server": ["nginx", "postgresql", "htop"],
-        "laptop": ["krita", "kdenlive", "mpv"]
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["htop", "curl", "nano"]
     }
 }

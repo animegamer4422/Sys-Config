@@ -1,23 +1,14 @@
 {
-    "debian": {
-        "packages": [
-            "curl",
-            "vim",
-            "htop"
-        ]
-    },
     "fedora": {
-        "packages": [
-            "curl",
-            "vim",
-            "htop"
-        ]
+        "server": ["nginx", "docker", "tmux"],
+        "laptop": ["firefox", "vlc", "gimp"]
+    },
+    "debian": {
+        "server": ["apache2", "mysql-server", "ufw"],
+        "laptop": ["libreoffice", "thunderbird", "gparted"]
     },
     "arch": {
-        "packages": [
-            "curl",
-            "vim",
-            "htop"
-        ]
+        "server": ["nginx", "postgresql", "htop"],
+        "laptop": ["krita", "kdenlive", "mpv"]
     }
 }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Function to detect the package manager
+# Function to detect the package manager (used for installing essential tools)
 detect_package_manager() {
     if command -v apt &> /dev/null; then
         PACKAGE_MANAGER="apt"
@@ -14,19 +14,20 @@ detect_package_manager() {
     fi
 }
 
-# Function to install jq if not installed
-install_jq() {
-    if ! command -v jq &> /dev/null; then
-        echo "jq is not installed. Installing jq..."
+# Function to ensure essential tools are installed
+install_essential_tools() {
+    local tool=$1
+    if ! command -v "$tool" &> /dev/null; then
+        echo "$tool is not installed. Installing $tool..."
         case $PACKAGE_MANAGER in
             "apt")
-                $SUDO apt update && $SUDO apt install -y jq
+                $SUDO apt update && $SUDO apt install -y "$tool"
                 ;;
             "dnf")
-                $SUDO dnf install -y jq
+                $SUDO dnf install -y "$tool"
                 ;;
             "pacman")
-                $SUDO pacman -Sy --noconfirm jq
+                $SUDO pacman -Sy --noconfirm "$tool"
                 ;;
             *)
                 echo "Error: Unsupported package manager."
@@ -36,7 +37,12 @@ install_jq() {
     fi
 }
 
-# Function to install packages
+# Function to install jq if not installed
+install_jq() {
+    install_essential_tools "jq"
+}
+
+# Function to install packages from the configuration file
 install_packages() {
     local packages=("$@")
     case $PACKAGE_MANAGER in
@@ -115,6 +121,7 @@ fi
 if [ -f /etc/os-release ]; then
     source /etc/os-release
     DISTRO=$ID
+    echo "Detected distribution: $DISTRO"
 else
     echo "Error: Could not determine the distribution."
     exit 1
@@ -122,6 +129,10 @@ fi
 
 # Detect the package manager
 detect_package_manager
+
+# Ensure essential tools (curl or wget) are installed
+install_essential_tools "curl"
+install_essential_tools "wget"
 
 # Ensure jq is installed
 install_jq

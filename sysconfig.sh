@@ -67,7 +67,7 @@ download_config_file() {
 if [ -z "$CONFIG_FILE" ]; then
     echo "No config file provided."
     echo "Please enter the path or URL to the config file:"
-    read -r CONFIG_FILE
+    read -p "Config File Location : " -r CONFIG_FILE
 fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then

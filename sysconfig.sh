@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Function to parse command-line arguments
+parse_arguments() {
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown argument: $1"
+                echo "Usage: $0 --config <path_or_url_to_config_file>"
+                exit 1
+                ;;
+        esac
+    done
+}
+
 # Function to detect the package manager (used for installing essential tools)
 detect_package_manager() {
     if command -v apt &> /dev/null; then
@@ -42,6 +59,54 @@ install_jq() {
     install_essential_tools "jq"
 }
 
+# Function to validate the configuration file
+validate_config_file() {
+    local config_file=$1
+
+    # Check if the file exists
+    if [ ! -f "$config_file" ]; then
+        echo "Error: Configuration file '$config_file' does not exist."
+        exit 1
+    fi
+
+    # Check if the file is a valid JSON
+    if ! jq empty "$config_file" &> /dev/null; then
+        echo "Error: Configuration file '$config_file' is not a valid JSON file."
+        exit 1
+    fi
+
+    # Check if the JSON contains valid structure
+    local distributions
+    distributions=$(jq -r 'keys[]' "$config_file" 2>/dev/null)
+
+    if [[ -z "$distributions" ]]; then
+        echo "Error: Configuration file '$config_file' does not contain any distributions."
+        exit 1
+    fi
+
+    for distro in $distributions; do
+        local configs
+        configs=$(jq -r --arg distro "$distro" '.[$distro] | keys[]' "$config_file" 2>/dev/null)
+
+        if [[ -z "$configs" ]]; then
+            echo "Error: Distribution '$distro' does not contain any configurations."
+            exit 1
+        fi
+
+        for config in $configs; do
+            local packages
+            packages=$(jq -r --arg distro "$distro" --arg config "$config" '.[$distro][$config][]' "$config_file" 2>/dev/null)
+
+            if [[ -z "$packages" ]]; then
+                echo "Error: Configuration '$config' under distribution '$distro' contains no packages."
+                exit 1
+            fi
+        done
+    done
+
+    echo "Validation successful: Configuration file '$config_file' is valid."
+}
+
 # Function to install packages from the configuration file
 install_packages() {
     local packages=("$@")
@@ -60,25 +125,6 @@ install_packages() {
             exit 1
             ;;
     esac
-}
-
-# Function to read the JSON file and get the packages list for the selected distribution and configuration
-get_packages_for_distribution_and_config() {
-    local distro=$1
-    local config=$2
-    local json_file=$3
-
-    if ! packages=$(jq -r --arg distro "$distro" --arg config "$config" '.[$distro][$config][]' "$json_file" 2>/dev/null); then
-        echo "Error: Failed to parse the config file. Ensure it is a valid JSON file."
-        exit 1
-    fi
-
-    if [[ -z "$packages" ]]; then
-        echo "Error: No packages found for distribution '$distro' and configuration '$config' in the config file."
-        exit 1
-    fi
-
-    echo "$packages"
 }
 
 # Function to download config file if it's a URL
@@ -105,6 +151,9 @@ else
     SUDO="sudo"
 fi
 
+# Parse command-line arguments
+parse_arguments "$@"
+
 # Main script execution
 if [ -z "$CONFIG_FILE" ]; then
     echo "No config file provided."
@@ -114,10 +163,13 @@ fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
     CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
-elif [ ! -f "$CONFIG_FILE" ]; then
+elif [ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: Config file '$CONFIG_FILE' not found."
     exit 1
 fi
+
+# Validate the configuration file
+validate_config_file "$CONFIG_FILE"
 
 if [ -f /etc/os-release ]; then
     source /etc/os-release
@@ -174,7 +226,7 @@ if [ -z "$CONFIG_TYPE" ]; then
 fi
 
 # Get the list of packages for the selected configuration
-PACKAGES=$(get_packages_for_distribution_and_config "$DISTRO" "$CONFIG_TYPE" "$CONFIG_FILE")
+PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config][]' "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
 # Install the packages

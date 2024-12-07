@@ -1,0 +1,23 @@
+{
+    "debian": {
+        "packages": [
+            "curl",
+            "vim",
+            "htop"
+        ]
+    },
+    "fedora": {
+        "packages": [
+            "curl",
+            "vim",
+            "htop"
+        ]
+    },
+    "arch": {
+        "packages": [
+            "curl",
+            "vim",
+            "htop"
+        ]
+    }
+}

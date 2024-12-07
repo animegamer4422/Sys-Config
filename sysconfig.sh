@@ -62,18 +62,19 @@ install_packages() {
     esac
 }
 
-# Function to read the JSON file and get the packages list for the current distribution
-get_packages_for_distribution() {
+# Function to read the JSON file and get the packages list for the selected distribution and configuration
+get_packages_for_distribution_and_config() {
     local distro=$1
-    local json_file=$2
+    local config=$2
+    local json_file=$3
 
-    if ! packages=$(jq -r --arg distro "$distro" '.[$distro].packages[]' "$json_file" 2>/dev/null); then
+    if ! packages=$(jq -r --arg distro "$distro" --arg config "$config" '.[$distro][$config][]' "$json_file" 2>/dev/null); then
         echo "Error: Failed to parse the config file. Ensure it is a valid JSON file."
         exit 1
     fi
 
     if [[ -z "$packages" ]]; then
-        echo "Error: No packages found for distribution '$distro' in the config file."
+        echo "Error: No packages found for distribution '$distro' and configuration '$config' in the config file."
         exit 1
     fi
 
@@ -137,15 +138,50 @@ install_essential_tools "wget"
 # Ensure jq is installed
 install_jq
 
-# Get the list of packages for the current distribution
-PACKAGES=$(get_packages_for_distribution "$DISTRO" "$CONFIG_FILE")
+# Prompt the user to select a configuration type if not already provided
+if [ -z "$CONFIG_TYPE" ]; then
+    echo "Available configurations for '$DISTRO':"
+    CONFIG_KEYS=($(jq -r --arg distro "$DISTRO" 'keys[]' "$CONFIG_FILE" 2>/dev/null))
+    if [[ ${#CONFIG_KEYS[@]} -eq 0 ]]; then
+        echo "Error: No configurations found for distribution '$DISTRO' in the config file."
+        exit 1
+    fi
+
+    # Display configurations as numbered list
+    for i in "${!CONFIG_KEYS[@]}"; do
+        ALPHABET=$(printf "\x$(printf %x $((97 + i)))")
+        echo "$((i + 1)) ($ALPHABET) - ${CONFIG_KEYS[$i]}"
+    done
+
+    # Prompt the user to select a configuration
+    echo "Please select a configuration by number or letter:" > /dev/tty
+    read -r CONFIG_SELECTION < /dev/tty
+
+    # Convert letter to number if necessary
+    if [[ "$CONFIG_SELECTION" =~ ^[a-zA-Z]$ ]]; then
+        CONFIG_INDEX=$(( $(printf "%d" "'$CONFIG_SELECTION") - 97 ))
+    else
+        CONFIG_INDEX=$((CONFIG_SELECTION - 1))
+    fi
+
+    # Validate the selection
+    if [[ $CONFIG_INDEX -lt 0 || $CONFIG_INDEX -ge ${#CONFIG_KEYS[@]} ]]; then
+        echo "Invalid selection. Exiting."
+        exit 1
+    fi
+
+    CONFIG_TYPE=${CONFIG_KEYS[$CONFIG_INDEX]}
+fi
+
+# Get the list of packages for the selected configuration
+PACKAGES=$(get_packages_for_distribution_and_config "$DISTRO" "$CONFIG_TYPE" "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
 # Install the packages
 install_packages "${PACKAGE_ARRAY[@]}"
 
 # List installed packages
-echo "The following packages were installed:"
+echo "The following packages were installed under the '$CONFIG_TYPE' configuration for '$DISTRO':"
 for pkg in "${PACKAGE_ARRAY[@]}"; do
     echo "- $pkg"
 done

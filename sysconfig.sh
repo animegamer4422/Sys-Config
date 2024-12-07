@@ -14,6 +14,30 @@ detect_package_manager() {
     fi
 }
 
+# Function to install jq if not installed
+install_jq() {
+    if command -v jq &> /dev/null; then
+        echo "jq is already installed."
+    else
+        echo "jq is not installed. Installing jq..."
+        case $PACKAGE_MANAGER in
+            "apt")
+                sudo apt update && sudo apt install -y jq
+                ;;
+            "dnf")
+                sudo dnf install -y jq
+                ;;
+            "pacman")
+                sudo pacman -Sy --noconfirm jq
+                ;;
+            *)
+                echo "Error: Unsupported package manager."
+                exit 1
+                ;;
+        esac
+    fi
+}
+
 # Function to install packages for Debian-based systems
 install_debian_packages() {
     local packages=("$@")
@@ -77,11 +101,6 @@ elif [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-if ! command -v jq &> /dev/null; then
-    echo "Error: jq is required but not installed."
-    exit 1
-fi
-
 if [ -f /etc/os-release ]; then
     source /etc/os-release
     DISTRO=$ID
@@ -90,10 +109,17 @@ else
     exit 1
 fi
 
+# Detect the package manager
 detect_package_manager
+
+# Ensure jq is installed
+install_jq
+
+# Get the list of packages for the current distribution
 PACKAGES=$(get_packages_for_distribution "$DISTRO" "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
+# Install the packages based on the detected package manager
 case $PACKAGE_MANAGER in
     "apt")
         install_debian_packages "${PACKAGE_ARRAY[@]}"

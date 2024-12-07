@@ -87,21 +87,28 @@ wget -qO- https://raw.githubusercontent.com/animegamer4422/Sys-Config/main/sysco
 
 The script uses a JSON file to determine which packages to install based on the system's distribution. You can specify the configuration file as a local path or a remote URL.
 
-### Example Configuration File: `Sample-Config.json`
+### Sample Configuration File
+You can find the sample configuration file in the repository:  
+[Sample-Config.json](./Sample-Config.json)
+
+Below is an example of how the configuration file is structured:
+
 ```json
 {
-    "debian": {
-        "packages": ["curl", "vim", "htop"]
-    },
     "fedora": {
-        "packages": ["curl", "vim", "htop"]
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["vlc", "curl", "nano"]
+    },
+    "debian": {
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["vlc", "curl", "nano"]
     },
     "arch": {
-        "packages": ["curl", "vim", "htop"]
+        "server": ["htop", "curl", "nano"],
+        "laptop": ["vlc", "curl", "nano"]
     }
 }
 ```
-
 ---
 
 ## Example Output

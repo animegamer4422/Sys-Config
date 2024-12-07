@@ -20,13 +20,13 @@ install_jq() {
         echo "jq is not installed. Installing jq..."
         case $PACKAGE_MANAGER in
             "apt")
-                sudo apt update && sudo apt install -y jq
+                $SUDO apt update && $SUDO apt install -y jq
                 ;;
             "dnf")
-                sudo dnf install -y jq
+                $SUDO dnf install -y jq
                 ;;
             "pacman")
-                sudo pacman -Sy --noconfirm jq
+                $SUDO pacman -Sy --noconfirm jq
                 ;;
             *)
                 echo "Error: Unsupported package manager."
@@ -34,6 +34,26 @@ install_jq() {
                 ;;
         esac
     fi
+}
+
+# Function to install packages
+install_packages() {
+    local packages=("$@")
+    case $PACKAGE_MANAGER in
+        "apt")
+            $SUDO apt update -y && $SUDO apt install -y "${packages[@]}"
+            ;;
+        "dnf")
+            $SUDO dnf install -y "${packages[@]}"
+            ;;
+        "pacman")
+            $SUDO pacman -Sy --noconfirm "${packages[@]}"
+            ;;
+        *)
+            echo "Error: Unsupported package manager."
+            exit 1
+            ;;
+    esac
 }
 
 # Function to read the JSON file and get the packages list for the current distribution
@@ -71,6 +91,13 @@ download_config_file() {
     echo "$file_name"
 }
 
+# Check if the script is run as root
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # Main script execution
 if [ -z "$CONFIG_FILE" ]; then
     echo "No config file provided."
@@ -103,22 +130,11 @@ install_jq
 PACKAGES=$(get_packages_for_distribution "$DISTRO" "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
 
-# Install the packages based on the detected package manager
-case $PACKAGE_MANAGER in
-    "apt")
-        sudo apt update -y
-        sudo apt install -y "${PACKAGE_ARRAY[@]}"
-        ;;
-    "dnf")
-        sudo dnf install -y "${PACKAGE_ARRAY[@]}"
-        ;;
-    "pacman")
-        sudo pacman -Sy --noconfirm "${PACKAGE_ARRAY[@]}"
-        ;;
-    *)
-        echo "Error: Unsupported package manager."
-        exit 1
-        ;;
-esac
+# Install the packages
+install_packages "${PACKAGE_ARRAY[@]}"
 
-echo "Packages installed successfully!"
+# List installed packages
+echo "The following packages were installed:"
+for pkg in "${PACKAGE_ARRAY[@]}"; do
+    echo "- $pkg"
+done

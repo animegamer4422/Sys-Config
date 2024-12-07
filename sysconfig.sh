@@ -16,9 +16,7 @@ detect_package_manager() {
 
 # Function to install jq if not installed
 install_jq() {
-    if command -v jq &> /dev/null; then
-        echo "jq is already installed."
-    else
+    if ! command -v jq &> /dev/null; then
         echo "jq is not installed. Installing jq..."
         case $PACKAGE_MANAGER in
             "apt")
@@ -38,35 +36,21 @@ install_jq() {
     fi
 }
 
-# Function to install packages for Debian-based systems
-install_debian_packages() {
-    local packages=("$@")
-    sudo apt update -y
-    sudo apt install -y "${packages[@]}"
-}
-
-# Function to install packages for Fedora-based systems
-install_fedora_packages() {
-    local packages=("$@")
-    sudo dnf install -y "${packages[@]}"
-}
-
-# Function to install packages for Arch-based systems
-install_arch_packages() {
-    local packages=("$@")
-    sudo pacman -Sy --noconfirm "${packages[@]}"
-}
-
 # Function to read the JSON file and get the packages list for the current distribution
 get_packages_for_distribution() {
     local distro=$1
     local json_file=$2
 
-    packages=$(jq -r --arg distro "$distro" '.[$distro].packages[]' "$json_file" 2>/dev/null)
+    if ! packages=$(jq -r --arg distro "$distro" '.[$distro].packages[]' "$json_file" 2>/dev/null); then
+        echo "Error: Failed to parse the config file. Ensure it is a valid JSON file."
+        exit 1
+    fi
+
     if [[ -z "$packages" ]]; then
         echo "Error: No packages found for distribution '$distro' in the config file."
         exit 1
     fi
+
     echo "$packages"
 }
 
@@ -76,9 +60,9 @@ download_config_file() {
     local file_name=$(basename "$url")
 
     if command -v wget &> /dev/null; then
-        wget -O "$file_name" "$url" || { echo "Error: Failed to download file using wget."; exit 1; }
+        wget -q -O "$file_name" "$url" || { echo "Error: Failed to download file using wget."; exit 1; }
     elif command -v curl &> /dev/null; then
-        curl -o "$file_name" "$url" || { echo "Error: Failed to download file using curl."; exit 1; }
+        curl -s -o "$file_name" "$url" || { echo "Error: Failed to download file using curl."; exit 1; }
     else
         echo "Error: Neither wget nor curl is installed."
         exit 1
@@ -122,13 +106,14 @@ PACKAGE_ARRAY=($PACKAGES)
 # Install the packages based on the detected package manager
 case $PACKAGE_MANAGER in
     "apt")
-        install_debian_packages "${PACKAGE_ARRAY[@]}"
+        sudo apt update -y
+        sudo apt install -y "${PACKAGE_ARRAY[@]}"
         ;;
     "dnf")
-        install_fedora_packages "${PACKAGE_ARRAY[@]}"
+        sudo dnf install -y "${PACKAGE_ARRAY[@]}"
         ;;
     "pacman")
-        install_arch_packages "${PACKAGE_ARRAY[@]}"
+        sudo pacman -Sy --noconfirm "${PACKAGE_ARRAY[@]}"
         ;;
     *)
         echo "Error: Unsupported package manager."

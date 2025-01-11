@@ -1,14 +1,32 @@
 {
     "fedora": {
-        "server": ["htop", "curl", "nano"],
-        "laptop": ["htop", "curl", "nano"]
+        "server": {
+            "packages": ["htop", "curl", "nano"],
+            "silent": true
+        },
+        "laptop": {
+            "packages": ["vlc", "curl", "nano"],
+            "silent": false
+        }
     },
     "debian": {
-        "server": ["htop", "curl", "nano"],
-        "laptop": ["htop", "curl", "nano"]
+        "server": {
+            "packages": ["htop", "curl", "nano"],
+            "silent": true
+        },
+        "laptop": {
+            "packages": ["vlc", "curl", "nano"],
+            "silent": false
+        }
     },
     "arch": {
-        "server": ["htop", "curl", "nano"],
-        "laptop": ["htop", "curl", "nano"]
+        "server": {
+            "packages": ["htop", "curl", "nano"],
+            "silent": true
+        },
+        "laptop": {
+            "packages": ["vlc", "curl", "nano"],
+            "silent": false
+        }
     }
 }

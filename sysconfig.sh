@@ -134,7 +134,7 @@ fi
 
 if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
     CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
-elif [ ! -f "$CONFIG_FILE" ]]; then
+elif [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: Config file '$CONFIG_FILE' not found."
     exit 1
 fi
@@ -196,38 +196,41 @@ if [ -z "$CONFIG_TYPE" ]; then
     CONFIG_TYPE=${CONFIG_KEYS[$CONFIG_INDEX]}
 fi
 
-# Get the list of packages for the selected configuration
-PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config][]' "$CONFIG_FILE")
+# Get the packages and silent mode for the selected configuration
+PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config].packages[]' "$CONFIG_FILE")
 PACKAGE_ARRAY=($PACKAGES)
+SILENT_MODE=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config].silent' "$CONFIG_FILE")
 
-# Show selected packages and ask for confirmation
-echo "Selected configuration '$CONFIG_TYPE' includes the following packages:"
-for pkg in "${PACKAGE_ARRAY[@]}"; do
-    echo "- $pkg"
-done
-
-echo "Would you like to add more packages to the list? (y/n):" > /dev/tty
-read -r ADD_MORE < /dev/tty
-
-if [[ "$ADD_MORE" =~ ^[Yy]$ ]]; then
-    echo "Enter additional packages, separated by spaces:" > /dev/tty
-    read -r -a EXTRA_PACKAGES < /dev/tty
-    PACKAGE_ARRAY+=("${EXTRA_PACKAGES[@]}")
+if [[ "$SILENT_MODE" != "true" ]]; then
+    SILENT_MODE=false
 fi
 
-echo "Final package list to be installed:"
-for pkg in "${PACKAGE_ARRAY[@]}"; do
-    echo "- $pkg"
-done
+echo "Silent mode for '$CONFIG_TYPE': $SILENT_MODE"
 
-echo "Do you want to proceed with installation? (y/n):" > /dev/tty
-read -r CONFIRM < /dev/tty
+# Ask for additional packages if silent mode is disabled
+if [ "$SILENT_MODE" = false ]; then
+    echo "Would you like to add more packages to the list? (y/n):" > /dev/tty
+    read -r ADD_MORE < /dev/tty
+
+    if [[ "$ADD_MORE" =~ ^[Yy]$ ]]; then
+        echo "Enter additional packages, separated by spaces:" > /dev/tty
+        read -r -a EXTRA_PACKAGES < /dev/tty
+        PACKAGE_ARRAY+=("${EXTRA_PACKAGES[@]}")
+    fi
+fi
+
+# Confirm package installation
+if [ "$SILENT_MODE" = true ]; then
+    CONFIRM="y"
+else
+    echo "Do you want to proceed with installation? (y/n):" > /dev/tty
+    read -r CONFIRM < /dev/tty
+fi
 
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
     echo "Installation cancelled."
     exit 0
 fi
-
 
 # Install the packages
 install_packages "${PACKAGE_ARRAY[@]}"

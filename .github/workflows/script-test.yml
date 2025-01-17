@@ -7,7 +7,8 @@ on:
   pull_request:
     branches:
       - Github-Actions  
-
+  workflow_dispatch:
+  
 jobs:
   test:
     runs-on: debian-11  # Use a Debian environment for this job

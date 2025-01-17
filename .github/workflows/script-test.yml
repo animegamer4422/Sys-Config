@@ -1,0 +1,42 @@
+name: Test Script on Commit
+
+on:
+  push:
+    branches:
+      - Github-Actions  
+  pull_request:
+    branches:
+      - Github-Actions  
+
+jobs:
+  test:
+    runs-on: debian-11  # Use a Debian environment for this job
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install wget
+      run: sudo apt-get update && sudo apt-get install -y wget
+
+    - name: Run sysconfig script
+      run: |
+        wget -qO- https://raw.githubusercontent.com/animegamer4422/Sys-Config/main/sysconfig.sh | bash -s -- --config https://raw.githubusercontent.com/animegamer4422/Sys-Config/main/Sample-Config.json
+
+    - name: Check if packages are installed
+      run: |
+        # Read the Sample-Config.json file
+        CONFIG_URL="https://raw.githubusercontent.com/animegamer4422/Sys-Config/main/Sample-Config.json"
+        curl -s $CONFIG_URL -o config.json
+
+        # Extract package names from the JSON and check if they are installed
+        PACKAGES=$(jq -r '.packages[]' config.json)
+
+        for package in $PACKAGES; do
+          if dpkg -l | grep -q $package; then
+            echo "$package is installed."
+          else
+            echo "$package is not installed!"
+            exit 1  # Fail the workflow if any package is missing
+          fi
+        done

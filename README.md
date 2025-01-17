@@ -25,16 +25,6 @@
 
 ---
 
-## Installation
-
-Clone the repository locally:
-```bash
-git clone https://github.com/animegamer4422/Sys-Config.git
-cd Sys-Config
-```
-
----
-
 ## Usage
 
 The script reads a JSON configuration file to determine the packages to install. You can provide the configuration file in several ways, including interactively, via the `--config` flag, or through remote execution with `curl` or `wget`.

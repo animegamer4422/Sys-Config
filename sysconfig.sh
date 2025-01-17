@@ -78,6 +78,55 @@ validate_config_file() {
     echo "Validation successful: Configuration file '$config_file' is valid."
 }
 
+# Check if the script is run as root
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
+# Parse command-line arguments
+parse_arguments "$@"
+
+# Detect the package manager
+detect_package_manager
+
+# Ensure jq is installed before validating the config file
+install_jq
+
+# Main script execution
+if [ -z "$CONFIG_FILE" ]; then
+    echo "No config file provided."
+    echo "Please enter the path or URL to the config file:" > /dev/tty
+    read -r CONFIG_FILE < /dev/tty
+fi
+
+if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
+    CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
+elif [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Config file '$CONFIG_FILE' not found."
+    exit 1
+fi
+
+# Function to validate the configuration file
+validate_config_file() {
+    local config_file=$1
+
+    # Check if the file exists
+    if [ ! -f "$config_file" ]; then
+        echo "Error: Configuration file '$config_file' does not exist."
+        exit 1
+    fi
+
+    # Check if the file is a valid JSON
+    if ! jq empty "$config_file" &> /dev/null; then
+        echo "Error: Configuration file '$config_file' is not a valid JSON file."
+        exit 1
+    fi
+
+    echo "Validation successful: Configuration file '$config_file' is valid."
+}
+
 # Function to install packages
 install_packages() {
     local packages=("$@")

@@ -226,7 +226,11 @@ fi
 if [ "$SILENT_MODE" = true ]; then
     CONFIRM="y"
 else
-    echo "Do you want to proceed with installation? (y/n):" > /dev/tty
+    for package in "${PACKAGE_ARRAY[@]}"; do
+    echo "- $package"
+    done
+
+    echo "Above are the packages that'll be installed , Do you want to proceed with installation? (y/n):" > /dev/tty
     read -r CONFIRM < /dev/tty
 fi
 

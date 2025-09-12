@@ -1,249 +1,334 @@
-#!/bin/bash
+#!/bin/sh
+# POSIX sh compatible
 
-# Function to parse command-line arguments
+set -eu
+IFS='
+	'
+
+LOG_LEVEL="INFO"   # INFO|DEBUG
+DRY_RUN="false"
+SILENT_MODE_ENV=""
+YES="false"
+CONFIG_FILE="${CONFIG_FILE:-}"
+CONFIG_TYPE="${CONFIG_TYPE:-}"
+SUDO=""
+
+log() {
+  lvl="$1"; shift
+  if [ "$lvl" = "DEBUG" ] && [ "$LOG_LEVEL" != "DEBUG" ]; then
+    return 0
+  fi
+  printf '[%s] %s\n' "$lvl" "$*" >&2
+}
+
+run() {
+  log "DEBUG" "RUN: $*"
+  if [ "$DRY_RUN" = "true" ]; then
+    return 0
+  fi
+  "$@"
+}
+
 parse_arguments() {
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            --config)
-                CONFIG_FILE="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown argument: $1"
-                echo "Usage: $0 --config <path_or_url_to_config_file>"
-                exit 1
-                ;;
-        esac
-    done
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --config)       CONFIG_FILE="${2:-}"; shift 2 ;;
+      --config-type)  CONFIG_TYPE="${2:-}"; shift 2 ;;
+      --yes|-y)       YES="true"; shift ;;
+      --silent)       SILENT_MODE_ENV="true"; shift ;;
+      --dry-run)      DRY_RUN="true"; shift ;;
+      --debug)        LOG_LEVEL="DEBUG"; shift ;;
+      -h|--help)
+        cat <<EOF
+Usage: $0 --config <path_or_url_to_config_file> [options]
+
+Options:
+  --config <path_or_url>   JSON config path or HTTPS URL
+  --config-type <name>     Configuration key to use (skips prompt)
+  --yes | -y               Assume "yes" to prompts (non-interactive safe)
+  --silent                 Force silent mode (skip extra packages prompt)
+  --dry-run                Show what would happen; make no changes
+  --debug                  Verbose debug logging
+  -h | --help              Show this help
+EOF
+        exit 0 ;;
+      *) echo "Unknown argument: $1"; echo "Try: $0 --help"; exit 1 ;;
+    esac
+  done
 }
 
-# Function to detect the package manager (used for installing essential tools)
+decide_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+}
+
 detect_package_manager() {
-    if command -v apt &> /dev/null; then
-        PACKAGE_MANAGER="apt"
-    elif command -v dnf &> /dev/null; then
-        PACKAGE_MANAGER="dnf"
-    elif command -v pacman &> /dev/null; then
-        PACKAGE_MANAGER="pacman"
-    else
-        echo "Error: Unsupported package manager."
-        exit 1
-    fi
+  if command -v apt-get >/dev/null 2>&1; then
+    PACKAGE_MANAGER="apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    PACKAGE_MANAGER="dnf"
+  elif command -v pacman >/dev/null 2>&1; then
+    PACKAGE_MANAGER="pacman"
+  elif command -v apk >/dev/null 2>&1; then
+    PACKAGE_MANAGER="apk"
+  else
+    echo "Error: Unsupported package manager."; exit 1
+  fi
+  log "DEBUG" "Detected package manager: $PACKAGE_MANAGER"
 }
 
-# Function to ensure essential tools are installed
-install_essential_tools() {
-    local tool=$1
-    if ! command -v "$tool" &> /dev/null; then
-        echo "$tool is not installed. Installing $tool..."
-        case $PACKAGE_MANAGER in
-            "apt")
-                $SUDO apt update && $SUDO apt install -y "$tool"
-                ;;
-            "dnf")
-                $SUDO dnf install -y "$tool"
-                ;;
-            "pacman")
-                $SUDO pacman -Sy --noconfirm "$tool"
-                ;;
-            *)
-                echo "Error: Unsupported package manager."
-                exit 1
-                ;;
-        esac
-    fi
+install_essential_tool() {
+  tool="$1"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    log "INFO" "$tool is not installed. Installing $tool..."
+    case "$PACKAGE_MANAGER" in
+      apt)    run $SUDO apt-get update; run $SUDO apt-get install -y "$tool" ;;
+      dnf)    run $SUDO dnf install -y "$tool" ;;
+      pacman) run $SUDO pacman -S --noconfirm --needed "$tool" ;;
+      apk)    run $SUDO apk add --no-cache "$tool" ;; 
+      *) echo "Error: Unsupported package manager."; exit 1 ;;
+    esac
+
+  else
+    log "DEBUG" "$tool already present"
+  fi
 }
 
-# Function to install jq if not installed
-install_jq() {
-    install_essential_tools "jq"
-}
+install_jq() { install_essential_tool "jq"; }
 
-# Function to validate the configuration file
 validate_config_file() {
-    local config_file=$1
-
-    # Check if the file exists
-    if [ ! -f "$config_file" ]; then
-        echo "Error: Configuration file '$config_file' does not exist."
-        exit 1
-    fi
-
-    # Check if the file is a valid JSON
-    if ! jq empty "$config_file" &> /dev/null; then
-        echo "Error: Configuration file '$config_file' is not a valid JSON file."
-        exit 1
-    fi
-
-    echo "Validation successful: Configuration file '$config_file' is valid."
+  config_file="$1"
+  [ -f "$config_file" ] || { echo "Error: Configuration file '$config_file' does not exist."; exit 1; }
+  jq empty "$config_file" >/dev/null 2>&1 || { echo "Error: Configuration file '$config_file' is not valid JSON."; exit 1; }
+  log "INFO" "Validation successful: '$config_file' is valid."
 }
 
-# Parse command-line arguments
-parse_arguments "$@"
+download_config_file() {
+  url="$1"
+  if command -v mktemp >/dev/null 2>&1; then
+    tmp="$(mktemp -t cfg.XXXXXX.json)"
+  else
+    tmp="/tmp/cfg.$$.$(date +%s).json"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    run curl -fsSL "$url" -o "$tmp" || { echo "Error: Failed to download with curl."; exit 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    run wget -qO "$tmp" "$url" || { echo "Error: Failed to download with wget."; exit 1; }
+  else
+    echo "Error: Neither curl nor wget is installed."; exit 1
+  fi
+  echo "$tmp"
+}
 
-# Detect the package manager
+install_packages() {
+  [ "$#" -gt 0 ] || { log "INFO" "No packages to install."; return 0; }
+  case "$PACKAGE_MANAGER" in
+    apt)    run $SUDO apt-get update; run $SUDO apt-get install -y "$@" ;;
+    dnf)    run $SUDO dnf install -y "$@" ;;
+    pacman) run $SUDO pacman -S --noconfirm --needed "$@" ;;
+    apk)    run $SUDO apk add --no-cache "$@" ;;
+    *) echo "Error: Unsupported package manager."; exit 1 ;;
+  esac
+}
+
+
+resolve_distro_key() {
+  [ -f /etc/os-release ] || { echo "Error: Could not determine the distribution."; exit 1; }
+  # shellcheck disable=SC1091
+  . /etc/os-release
+
+  prefer="${ID:-}"
+  like_list="${ID_LIKE-}"   # may be unset under 'set -u'
+
+  # Try exact ID first
+  if [ -n "$prefer" ] && jq -e --arg d "$prefer" 'has($d)' "$CONFIG_FILE" >/dev/null 2>&1; then
+    DISTRO="$prefer"
+    log "INFO" "Detected distribution key: $DISTRO"
+    return
+  fi
+
+  # Then try ID_LIKE (space-separated)
+  if [ -n "$like_list" ]; then
+    for like in $like_list; do
+      if jq -e --arg d "$like" 'has($d)' "$CONFIG_FILE" >/dev/null 2>&1; then
+        DISTRO="$like"
+        log "INFO" "Using fallback distribution key via ID_LIKE: $DISTRO"
+        return
+      fi
+    done
+  fi
+
+  # Helpful error with available keys
+  avail_keys="$(jq -r 'keys[]' "$CONFIG_FILE" | paste -sd' ' -)"
+  echo "Error: No configuration block for ID='${ID:-?}' and ID_LIKE='${ID_LIKE-}' in config.
+Available top-level keys: ${avail_keys:-<none>}"
+  exit 1
+}
+
+
+
+# ---------------- Entry ----------------
+parse_arguments "$@"
+decide_sudo
 detect_package_manager
 
-# Ensure jq is installed before validating the config file
+# Ensure a downloader exists (prefer curl); install only if neither exists.
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  install_essential_tool "curl"
+fi
+
 install_jq
 
-# Ensure essential tools (curl or wget) are installed
-install_essential_tools "curl"
-install_essential_tools "wget"
-
-
-# Main script execution
-if [ -z "$CONFIG_FILE" ]; then
-    echo "No config file provided."
+# Acquire CONFIG_FILE
+if [ -z "${CONFIG_FILE:-}" ]; then
+  echo "No config file provided."
+  if [ "$YES" != "true" ]; then
+    if ! [ -t 0 ] && ! [ -t 1 ]; then
+      echo "No TTY available and --config not provided. Exiting."; exit 1
+    fi
     echo "Please enter the path or URL to the config file:" > /dev/tty
-    read -r CONFIG_FILE < /dev/tty
+    # shellcheck disable=SC2162
+    read CONFIG_FILE < /dev/tty
+  else
+    echo "Error: --yes specified but --config missing."; exit 1
+  fi
 fi
 
+# If URL, download
+case "$CONFIG_FILE" in
+  http://*|https://*)
+    case "$CONFIG_FILE" in https://*) : ;; *) log "INFO" "Warning: Using non-HTTPS URL." ;; esac
+    CONFIG_FILE_TMP="$(download_config_file "$CONFIG_FILE")"
+    trap 'rm -f "$CONFIG_FILE_TMP"' EXIT
+    CONFIG_FILE="$CONFIG_FILE_TMP"
+    ;;
+  *)
+    [ -f "$CONFIG_FILE" ] || { echo "Error: Config file '$CONFIG_FILE' not found."; exit 1; }
+    ;;
+esac
 
-# Function to install packages
-install_packages() {
-    local packages=("$@")
-    case $PACKAGE_MANAGER in
-        "apt")
-            $SUDO apt update -y && $SUDO apt install -y "${packages[@]}"
-            ;;
-        "dnf")
-            $SUDO dnf install -y "${packages[@]}"
-            ;;
-        "pacman")
-            $SUDO pacman -Sy --noconfirm "${packages[@]}"
-            ;;
-        *)
-            echo "Error: Unsupported package manager."
-            exit 1
-            ;;
-    esac
-}
-
-# Function to download config file if it's a URL
-download_config_file() {
-    local url=$1
-    local file_name=$(basename "$url")
-
-    if command -v wget &> /dev/null; then
-        wget -q -O "$file_name" "$url" || { echo "Error: Failed to download file using wget."; exit 1; }
-    elif command -v curl &> /dev/null; then
-        curl -s -o "$file_name" "$url" || { echo "Error: Failed to download file using curl."; exit 1; }
-    else
-        echo "Error: Neither wget nor curl is installed."
-        exit 1
-    fi
-
-    echo "$file_name"
-}
-
-# Check if the script is run as root
-if [ "$(id -u)" -eq 0 ]; then
-    SUDO=""
-else
-    SUDO="sudo"
-fi
-
-if [[ "$CONFIG_FILE" =~ ^http[s]?:// ]]; then
-    CONFIG_FILE=$(download_config_file "$CONFIG_FILE")
-elif [ ! -f "$CONFIG_FILE" ]; then
-    echo "Error: Config file '$CONFIG_FILE' not found."
-    exit 1
-fi
-
-# Validate the configuration file
 validate_config_file "$CONFIG_FILE"
+resolve_distro_key
 
-if [ -f /etc/os-release ]; then
-    source /etc/os-release
-    DISTRO=$ID
-    echo "Detected distribution: $DISTRO"
-else
-    echo "Error: Could not determine the distribution."
+# List available config keys
+CONFIG_KEYS="$(jq -r --arg d "$DISTRO" '.[$d] | keys[]' "$CONFIG_FILE" | sed '/^[[:space:]]*$/d')"
+[ -n "$CONFIG_KEYS" ] || { echo "Error: No configurations found for distribution '$DISTRO'."; exit 1; }
+
+# Verify/choose CONFIG_TYPE
+if [ -n "${CONFIG_TYPE:-}" ]; then
+  if ! printf '%s\n' "$CONFIG_KEYS" | grep -qx -- "$CONFIG_TYPE"; then
+    avail="$(printf '%s' "$CONFIG_KEYS" | paste -sd' ' -)"
+    echo "Error: CONFIG_TYPE '$CONFIG_TYPE' not found for '$DISTRO'. Available: $avail"
     exit 1
-fi
-
-
-# Prompt the user to select a configuration type if not already provided
-if [ -z "$CONFIG_TYPE" ]; then
-    echo "Available configurations for '$DISTRO':"
-    CONFIG_KEYS=($(jq -r --arg distro "$DISTRO" '.[$distro] | keys[]' "$CONFIG_FILE" 2>/dev/null))
-    if [[ ${#CONFIG_KEYS[@]} -eq 0 ]]; then
-        echo "Error: No configurations found for distribution '$DISTRO' in the config file."
-        exit 1
-    fi
-
-    # Display configurations as numbered list
-    for i in "${!CONFIG_KEYS[@]}"; do
-        ALPHABET=$(printf "\x$(printf %x $((97 + i)))")
-        echo "$((i + 1)) ($ALPHABET) - ${CONFIG_KEYS[$i]}"
-    done
-
-    # Prompt the user to select a configuration
-    echo "Please select a configuration by number or letter:" > /dev/tty
-    read -r CONFIG_SELECTION < /dev/tty
-
-    # Convert letter to number if necessary
-    if [[ "$CONFIG_SELECTION" =~ ^[a-zA-Z]$ ]]; then
-        CONFIG_INDEX=$(( $(printf "%d" "'$CONFIG_SELECTION") - 97 ))
-    else
-        CONFIG_INDEX=$((CONFIG_SELECTION - 1))
-    fi
-
-    # Validate the selection
-    if [[ $CONFIG_INDEX -lt 0 || $CONFIG_INDEX -ge ${#CONFIG_KEYS[@]} ]]; then
-        echo "Invalid selection. Exiting."
-        exit 1
-    fi
-
-    CONFIG_TYPE=${CONFIG_KEYS[$CONFIG_INDEX]}
-fi
-
-# Get the packages and silent mode for the selected configuration
-PACKAGES=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config].packages[]' "$CONFIG_FILE")
-PACKAGE_ARRAY=($PACKAGES)
-SILENT_MODE=$(jq -r --arg distro "$DISTRO" --arg config "$CONFIG_TYPE" '.[$distro][$config].silent' "$CONFIG_FILE")
-
-if [[ "$SILENT_MODE" != "true" ]]; then
-    SILENT_MODE=false
-fi
-
-echo "Silent mode for '$CONFIG_TYPE': $SILENT_MODE"
-
-# Ask for additional packages if silent mode is disabled
-if [ "$SILENT_MODE" = false ]; then
-    echo "Would you like to add more packages to the list? (y/n):" > /dev/tty
-    read -r ADD_MORE < /dev/tty
-
-    if [[ "$ADD_MORE" =~ ^[Yy]$ ]]; then
-        echo "Enter additional packages, separated by spaces:" > /dev/tty
-        read -r -a EXTRA_PACKAGES < /dev/tty
-        PACKAGE_ARRAY+=("${EXTRA_PACKAGES[@]}")
-    fi
-fi
-
-# Confirm package installation
-if [ "$SILENT_MODE" = true ]; then
-    CONFIRM="y"
+  fi
 else
-    for package in "${PACKAGE_ARRAY[@]}"; do
-    echo "- $package"
+  if [ "$YES" != "true" ]; then
+    echo "Available configurations for '$DISTRO':"
+    idx=0
+    printf '%s\n' "$CONFIG_KEYS" | while IFS= read -r key; do
+      idx=$((idx+1))
+      letter=$(printf "\\$(printf '%03o' $((96 + idx)))")
+      echo "$idx ($letter) - $key"
     done
+    if ! [ -t 0 ] && ! [ -t 1 ]; then
+      echo "No TTY available to choose a configuration. Use --config-type <name>."
+      exit 1
+    fi
+    echo "Please select a configuration by number or letter:" > /dev/tty
+    # shellcheck disable=SC2162
+    read CONFIG_SELECTION < /dev/tty
 
-    echo "Above are the packages that'll be installed , Do you want to proceed with installation? (y/n):" > /dev/tty
-    read -r CONFIRM < /dev/tty
+    SEL_LOWER=$(printf '%s' "$CONFIG_SELECTION" | tr '[:upper:]' '[:lower:]')
+    case "$SEL_LOWER" in
+      [a-z]) ord=$(printf "%d" "'$SEL_LOWER"); CONFIG_INDEX=$((ord - 97)) ;;
+      *)     CONFIG_INDEX=$((CONFIG_SELECTION - 1)) ;;
+    esac
+
+    # Extract CONFIG_TYPE by index
+    i=0
+    : > /tmp/.cfgtype.$$
+    printf '%s\n' "$CONFIG_KEYS" | while IFS= read -r key; do
+      if [ "$i" -eq "$CONFIG_INDEX" ]; then
+        printf '%s' "$key" > /tmp/.cfgtype.$$
+        break
+      fi
+      i=$((i+1))
+    done
+    if [ ! -s /tmp/.cfgtype.$$ ]; then
+      echo "Invalid selection. Exiting."; rm -f /tmp/.cfgtype.$$
+      exit 1
+    fi
+    CONFIG_TYPE="$(cat /tmp/.cfgtype.$$)"
+    rm -f /tmp/.cfgtype.$$
+  else
+    echo "Error: --yes given but --config-type missing."; exit 1
+  fi
 fi
 
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "Installation cancelled."
-    exit 0
+# Ensure packages array exists and is array
+jq -e --arg d "$DISTRO" --arg c "$CONFIG_TYPE" \
+  '.[$d][$c].packages and (.[$d][$c].packages | type=="array")' \
+  "$CONFIG_FILE" >/dev/null 2>&1 || {
+    echo "Error: packages array missing or not an array for '$DISTRO' → '$CONFIG_TYPE'."; exit 1; }
+
+# Read packages (newline-separated)
+PACKAGES="$(jq -r --arg d "$DISTRO" --arg c "$CONFIG_TYPE" '.[$d][$c].packages[]' "$CONFIG_FILE" | sed '/^[[:space:]]*$/d')"
+
+# Determine silent mode, allow --silent to override
+SILENT_MODE="$(jq -r --arg d "$DISTRO" --arg c "$CONFIG_TYPE" '([.[$d][$c].silent] | first) // false | tostring' "$CONFIG_FILE")"
+[ -n "$SILENT_MODE_ENV" ] && SILENT_MODE="true"
+log "INFO" "Silent mode for '$CONFIG_TYPE': $SILENT_MODE"
+
+# Optionally add more packages (interactive only, not silent, not --yes)
+if [ "$SILENT_MODE" != "true" ] && [ "$YES" != "true" ]; then
+  if [ -t 0 ] || [ -t 1 ]; then
+    echo "Would you like to add more packages to the list? (y/n):" > /dev/tty
+    # shellcheck disable=SC2162
+    read ADD_MORE < /dev/tty
+    case "$ADD_MORE" in
+      y|Y)
+        echo "Enter additional packages, separated by spaces:" > /dev/tty
+        # shellcheck disable=SC2162
+        read EXTRA_PACKAGES < /dev/tty
+        if [ -n "$EXTRA_PACKAGES" ]; then
+          EXTRA_NL=$(printf '%s' "$EXTRA_PACKAGES" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
+          [ -n "$EXTRA_NL" ] && PACKAGES=$(printf '%s\n%s\n' "$PACKAGES" "$EXTRA_NL" | sed '/^[[:space:]]*$/d')
+        fi
+        ;;
+      *) : ;;
+    esac
+  else
+    log "DEBUG" "No TTY available; skipping extra packages prompt."
+  fi
 fi
 
-# Install the packages
-install_packages "${PACKAGE_ARRAY[@]}"
+# Confirm installation
+CONFIRM="n"
+if [ "$YES" = "true" ] || [ "$SILENT_MODE" = "true" ]; then
+  CONFIRM="y"
+else
+  echo "The following packages will be installed:"
+  printf '%s\n' "$PACKAGES" | while IFS= read -r p; do echo "  - $p"; done
+  if [ -t 0 ] || [ -t 1 ]; then
+    echo "Proceed with installation? (y/n):" > /dev/tty
+    # shellcheck disable=SC2162
+    read CONFIRM < /dev/tty
+  else
+    echo "No TTY available to confirm. Use --yes to proceed non-interactively."; exit 1
+  fi
+fi
 
-# Print the installed packages
+case "$CONFIRM" in y|Y) : ;; *) echo "Installation cancelled."; exit 0 ;; esac
+
+# Install packages (newline list → words; assumes no spaces in pkg names)
+# shellcheck disable=SC2086
+install_packages $PACKAGES
+
+# Post-install summary
 echo "Packages installed:"
-for package in "${PACKAGE_ARRAY[@]}"; do
+printf '%s\n' "$PACKAGES" | while IFS= read -r package; do
+  if command -v "$package" >/dev/null 2>&1; then
+    echo "- $package: $(command -v "$package")"
+  else
     echo "- $package"
+  fi
 done
